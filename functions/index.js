@@ -127,76 +127,84 @@ exports.sendEmailToAllUsersInCohort = functions.https.onRequest(async (req, resp
 });
 
 exports.addUserToDiscord = functions.https.onRequest(async (req, resp) => {
-  addUserToRole(req.query.user_id, req.query.role_id).then((r) =>
-    resp.send('OK')
-  )
-})
+  addUserToRole(req.query.user_id, req.query.role_id).then((r) => resp.send("OK"));
+});
 
-exports.inactiveEmail = functions.pubsub.schedule('0 19 * * *').onRun((context) => {
+exports.inactiveEmail = functions.pubsub.schedule("05 19 * * *").onRun((context) => {
+  const twoDaysAgo = new Date(new Date().setHours(new Date().getHours() - 48));
+  const oneDayAgo = new Date(new Date().setHours(new Date().getHours() - 24));
   const cohorts = await db
     .collection("cohorts")
-    .where("kickoffStartTime", "<", new Date(2022, 6, 9))
+    .where("kickoffStartTime", ">=", twoDaysAgo)
+    .where("kickoffStartTime", "<=", oneDayAgo)
     .get();
-  const cohort_ids = cohorts.map((c) => c.id);
 
+  const cohort_ids = cohorts.docs.map((c) => c.id);
   const lessons = await db
     .collection("lessons_submissions")
     .where("cohort_id", "in", cohort_ids)
     .get();
 
   const user_ids = lessons.docs.map((l) => l.data().user_id);
-
-  for (let cohort of cohorts) {
+  const unique_ids = [...new Set(user_ids)];
+  for (let cohort of cohorts.docs) {
+    console.log(cohort.id);
     db.collection("users")
-      .where("uid", "not-in", user_ids)
-      .where("cohort_ids", "==", cohort.id)
+      .where("uid", "not-in", unique_ids)
       .get()
       .then((users) => {
-        users.forEach((user) => {
-          sendEmail("reminder_email.js", cohort.data().email_content.subject, user.data().email, {
-            cohort: cohort.data(),
-          });
+        users.forEach(async (user) => {
+            try {
+              await sendEmail(
+                "reminder_email.js",
+                cohort.data().email_content.subject,
+                user.data().email,
+                {
+                  cohort: cohort.data(),
+                }
+              );
+            } catch (error) {
+              console.log(error);
+            }
         });
       });
-  }
-
-})
+    }
+});
 
 exports.addAllUsersFromCohortToDiscord = functions.https.onRequest(
   async (req, resp) => {
     const cohort_id = req.query.cohort_id
     const cohort = docData("cohorts", cohort_id);
 
-    if (!cohort) {
-      console.log('invalid cohort')
-      return resp.send('invalid cohort')
-    }
-
-    const users = await db.collection('users').get()
-
-    if (users.empty) {
-      console.log('no users to change')
-      return resp.send('no users')
-    }
-
-    users.forEach(async (doc) => {
-      const data = doc.data()
-      if (
-        data.cohorts &&
-        data.cohorts[0] &&
-        data?.discord?.id &&
-        data.cohorts[0].cohort_id === cohort_id
-      ) {
-        console.log(
-          `Adicionando role ${cohort.discord_role} do curso no discord: ${data.discord.username}`
-        )
-        try {
-          await addDiscordRole(data.discord.id, cohort.discord_role)
-        } catch (exception) {
-          console.log(exception)
-        }
-      }
-    })
-    resp.send('OK')
+  if (!cohort) {
+    console.log('invalid cohort')
+    return resp.send('invalid cohort')
   }
-)
+
+  const users = await db.collection('users').get()
+
+  if (users.empty) {
+    console.log('no users to change')
+    return resp.send('no users')
+  }
+
+  users.forEach(async (doc) => {
+    const data = doc.data()
+    if (
+      data.cohorts &&
+      data.cohorts[0] &&
+      data?.discord?.id &&
+      data.cohorts[0].cohort_id === cohort_id
+    ) {
+      console.log(
+        `Adicionando role ${cohort.discord_role} do curso no discord: ${data.discord.username}`
+      );
+      try {
+        await addDiscordRole(data.discord.id, cohort.discord_role);
+      } catch (exception) {
+        console.log(exception)
+      }
+    }
+  });
+  resp.send("OK")
+});
